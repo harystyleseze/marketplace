@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
 import { cacheMiddleware } from './cache-middleware.js';
 import { strictRateLimiter } from './rate-limit-middleware.js';
+import axios from 'axios';
 
 const router = Router();
 
@@ -13,19 +14,63 @@ const serialize = (obj: any) =>
 
 // GET /listings?artist= — all listings created by an artist
 router.get('/listings', async (req: Request, res: Response) => {
-    const { artist, owner } = req.query;
+    const { artist, owner, status, limit, offset } = req.query;
     try {
         const where: any = {};
         if (artist) where.artist = artist as string;
         if (owner) where.owner = owner as string;
+        if (status) where.status = status as string;
+
+        const take = Math.max(0, Math.min(Number(limit || 0), 1000)) || undefined;
+        const skip = Number(offset || 0) || undefined;
 
         const results = await prisma.listing.findMany({
             where,
             orderBy: { updatedAtLedger: 'desc' },
+            take,
+            skip,
         });
+
+        // If pagination requested, also return total count
+        if (take !== undefined || skip !== undefined) {
+            const total = await prisma.listing.count({ where });
+            return res.json({ listings: serialize(results), total });
+        }
+
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch listings' });
+    }
+});
+
+// GET /listings/:id — single listing with metadata (if available)
+router.get('/listings/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        const listing = await prisma.listing.findUnique({
+            where: { listingId: BigInt(id as string) },
+        });
+        if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+        const out: any = serialize(listing);
+        // Try to fetch metadata from IPFS gateway if available
+        const gateway = process.env.IPFS_GATEWAY || 'https://ipfs.io/ipfs/';
+        try {
+            const cid = listing.metadataCid || listing.metadata_cid || null;
+            if (cid) {
+                const url = cid.startsWith('ipfs://') ? `${gateway}${cid.replace(/^ipfs:\/\//, '')}` : `${gateway}${cid}`;
+                const r = await axios.get(url, { timeout: 5000 });
+                out.metadata = r.data;
+            } else {
+                out.metadata = null;
+            }
+        } catch (e) {
+            out.metadata = null;
+        }
+
+        res.json(out);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch listing' });
     }
 });
 

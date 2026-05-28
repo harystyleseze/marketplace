@@ -15,6 +15,7 @@ import {
   updateListing,
   Listing,
 } from "@/lib/contract";
+import { fetchListings } from "@/lib/indexer";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { useTransientErrorToast } from "./useTransientErrorToast";
@@ -28,7 +29,7 @@ export interface EnrichedListing extends Listing {
 
 // ── useMarketplace ────────────────────────────────────────────
 
-export function useMarketplace() {
+export function useMarketplace(opts?: { page?: number; limit?: number }) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +39,33 @@ export function useMarketplace() {
     setIsLoading(true);
     setError(null);
     try {
-      const all = await getAllListings();
-      // Show active listings first.
-      const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
-      setListings(sorted);
+      // Prefer indexer results when available
+      try {
+        if (opts && (opts.page || opts.limit)) {
+          const limit = opts.limit || 50;
+          const offset = opts.page ? (opts.page - 1) * limit : 0;
+          const res = await fetchListings({ status: "Active", limit, offset });
+          const rows = Array.isArray(res.listings) ? res.listings as any[] : [];
+          const sorted = [...rows].sort((a, b) => b.created_at - a.created_at);
+          setListings(sorted as Listing[]);
+        } else {
+          const res = await fetchListings({ status: "Active", limit: 1000 });
+          if (Array.isArray(res.listings) && res.listings.length > 0) {
+            const sorted = [...res.listings].sort((a: any, b: any) => b.created_at - a.created_at);
+            setListings(sorted as Listing[]);
+          } else {
+            // Fallback to on-chain scan
+            const all = await getAllListings();
+            const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
+            setListings(sorted);
+          }
+        }
+      } catch (e) {
+        // If indexer fails, fallback to on-chain
+        const all = await getAllListings();
+        const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
+        setListings(sorted);
+      }
     } catch (err: unknown) {
       setError(getReadableErrorMessage(err, "Failed to load listings"));
     } finally {

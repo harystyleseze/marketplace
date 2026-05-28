@@ -30,6 +30,8 @@ model Listing {
   royaltyBps      Int      @default(0)
   createdAtLedger Int
   updatedAtLedger Int
+  @@index([artist])
+  @@index([status])
 }
 
 model MarketplaceEvent {
@@ -40,6 +42,8 @@ model MarketplaceEvent {
   data            Json
   ledgerSequence  Int
   ledgerTimestamp DateTime @default(now())
+  @@index([actor])
+  @@index([eventType])
 }
 
 model Collection {
@@ -51,4 +55,5 @@ model Collection {
   symbol          String?
   deployedAtLedger Int
   createdAt       DateTime @default(now())
+  @@index([creator])
 }
