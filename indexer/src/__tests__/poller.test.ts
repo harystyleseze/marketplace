@@ -73,7 +73,7 @@ vi.mock('@stellar/stellar-sdk', () => ({
   },
 }));
 
-import { processEvent, revertLedgers } from '../poller';
+import { processEvent, revertLedgers, startPolling } from '../poller';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -400,5 +400,13 @@ describe('revertLedgers', () => {
   it('runs all operations inside a single transaction', async () => {
     await revertLedgers(300);
     expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+  });
+});
+
+// ── startPolling validation ───────────────────────────────────────────────────
+
+describe('startPolling', () => {
+  it('throws an error if both CONTRACT_ID and LAUNCHPAD_CONTRACT_ID are empty', async () => {
+    await expect(startPolling()).rejects.toThrow('At least one of MARKETPLACE_CONTRACT_ID or LAUNCHPAD_CONTRACT_ID must be set');
   });
 });

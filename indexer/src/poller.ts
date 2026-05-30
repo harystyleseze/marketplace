@@ -66,6 +66,10 @@ export async function revertLedgers(safeAtLedger: number): Promise<void> {
 }
 
 export async function startPolling() {
+  if (!CONTRACT_ID && !LAUNCHPAD_CONTRACT_ID) {
+    throw new Error('At least one of MARKETPLACE_CONTRACT_ID or LAUNCHPAD_CONTRACT_ID must be set');
+  }
+
   console.log(`Starting indexer poller for contract: ${CONTRACT_ID}`);
 
   while (true) {
