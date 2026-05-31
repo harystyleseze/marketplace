@@ -79,89 +79,110 @@ export async function startPolling() {
 async function processEvent(event: any) {
   const { eventType, listingId, actor, ledgerSequence, data } = event;
 
-  // 1. Log to MarketplaceEvent history
-  await prisma.marketplaceEvent.create({
-    data: {
-      listingId,
-      eventType,
-      actor,
-      ledgerSequence,
-      data,
-    },
-  });
+  const eventPayload = {
+    listingId,
+    eventType,
+    actor,
+    ledgerSequence,
+    data,
+  };
 
-  // 2. Update Listing state based on event type
-  if (!listingId) return;
+  if (!listingId) {
+    await prisma.marketplaceEvent.create({ data: eventPayload });
+    return;
+  }
 
-  switch (eventType) {
-    case 'LISTING_CREATED':
-      await prisma.listing.upsert({
-        where: { listingId },
-        create: {
-          listingId,
-          artist: data.artist,
-          owner: null,
-          price: data.price,
-          currency: data.currency,
-          metadataCid: data.metadata_cid,
-          token: data.token || '',
-          status: 'Active',
-          royaltyBps: data.royalty_bps || 0,
-          createdAtLedger: ledgerSequence,
-          updatedAtLedger: ledgerSequence,
-        },
-        update: {
-            artist: data.artist,
-            price: data.price,
-            metadataCid: data.metadata_cid,
-            status: 'Active',
-            updatedAtLedger: ledgerSequence,
-        }
-      });
-      break;
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.marketplaceEvent.create({ data: eventPayload });
 
-    case 'LISTING_UPDATED':
-      await prisma.listing.update({
-        where: { listingId },
-        data: {
-          price: data.new_price,
-          metadataCid: data.metadata_cid,
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      break;
+      switch (eventType) {
+        case 'LISTING_CREATED':
+          await tx.listing.upsert({
+            where: { listingId },
+            create: {
+              listingId,
+              artist: data.artist,
+              owner: null,
+              price: data.price,
+              currency: data.currency,
+              metadataCid: data.metadata_cid,
+              token: data.token || '',
+              status: 'Active',
+              royaltyBps: data.royalty_bps || 0,
+              createdAtLedger: ledgerSequence,
+              updatedAtLedger: ledgerSequence,
+            },
+            update: {
+              artist: data.artist,
+              price: data.price,
+              metadataCid: data.metadata_cid,
+              status: 'Active',
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
 
-    case 'ARTWORK_SOLD':
-      await prisma.listing.update({
-        where: { listingId },
-        data: {
-          status: 'Sold',
-          owner: data.buyer,
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      break;
-
-    case 'LISTING_CANCELLED':
-      await prisma.listing.update({
-        where: { listingId },
-        data: {
-          status: 'Cancelled',
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      break;
-    
-    // For Auctions and Offers, we might add more logic or separate tables if needed.
-    // For now, we mainly update listing status if an auction starts.
-    case 'AUCTION_CREATED':
-        await prisma.listing.update({
+        case 'LISTING_UPDATED':
+          await tx.listing.update({
             where: { listingId },
             data: {
-                status: 'Auction',
-                updatedAtLedger: ledgerSequence,
-            }
-        });
-        break;
+              price: data.new_price,
+              metadataCid: data.metadata_cid,
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
+
+        case 'ARTWORK_SOLD':
+          await tx.listing.update({
+            where: { listingId },
+            data: {
+              status: 'Sold',
+              owner: data.buyer,
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
+
+        case 'OFFER_ACCEPTED':
+          await tx.listing.update({
+            where: { listingId },
+            data: {
+              status: 'Sold',
+              owner: data.offerer,
+              price: data.amount,
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
+
+        case 'LISTING_CANCELLED':
+          await tx.listing.update({
+            where: { listingId },
+            data: {
+              status: 'Cancelled',
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
+
+        case 'AUCTION_CREATED':
+          await tx.listing.update({
+            where: { listingId },
+            data: {
+              status: 'Auction',
+              updatedAtLedger: ledgerSequence,
+            },
+          });
+          break;
+
+        default:
+          break;
+      }
+    });
+  } catch (error) {
+    console.error(`Failed to process event ${eventType} for listing ${listingId}:`, error);
+    throw error;
   }
 }
